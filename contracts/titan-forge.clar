@@ -391,3 +391,98 @@
     true ;; Remove the principal-destruct? check as it's not needed
   )
 )
+
+(define-private (is-valid-symbol (symbol (string-ascii 10)))
+  (and
+    (not (is-eq symbol "")) ;; Can't be empty
+    (not (is-eq symbol " ")) ;; Can't be just whitespace
+    (>= (len symbol) u2) ;; Must be at least 2 chars
+  )
+)
+
+(define-private (is-critical-token (token principal))
+  ;; Add any tokens that shouldn't be removed
+  (or
+    (is-eq token .wrapped-btc)
+    (is-eq token .wrapped-stx)
+  )
+)
+
+(define-private (is-critical-symbol (symbol (string-ascii 10)))
+  ;; Add any symbols that shouldn't be removed
+  (or
+    (is-eq symbol "BTC-USD")
+    (is-eq symbol "STX-USD")
+  )
+)
+
+;; Read-only functions
+
+(define-read-only (get-option (option-id uint))
+  (map-get? options option-id)
+)
+
+(define-read-only (get-user-position (user principal))
+  (map-get? user-positions user)
+)
+
+(define-read-only (get-protocol-fee-rate)
+  (var-get protocol-fee-rate)
+)
+
+;; Admin functions
+
+(define-public (set-protocol-fee-rate (new-rate uint))
+  (begin
+    (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-NOT-AUTHORIZED)
+    (asserts! (<= new-rate u1000) ERR-INVALID-PREMIUM) ;; Max 10%
+    (var-set protocol-fee-rate new-rate)
+    (ok true)
+  )
+)
+
+(define-public (update-price-feed
+    (symbol (string-ascii 10))
+    (price uint)
+    (timestamp uint)
+  )
+  (begin
+    (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-NOT-AUTHORIZED)
+    (asserts! (is-allowed-symbol symbol) ERR-INVALID-SYMBOL)
+    (asserts! (>= timestamp stacks-block-height) ERR-INVALID-TIMESTAMP)
+    (asserts! (> price u0) ERR-INVALID-STRIKE-PRICE)
+
+    (map-set price-feeds symbol {
+      price: price,
+      timestamp: timestamp,
+      source: tx-sender,
+    })
+    (ok true)
+  )
+)
+
+;; Admin function to manage approved tokens
+;; Update admin functions with validation
+
+(define-public (set-approved-token
+    (token principal)
+    (approved bool)
+  )
+  (begin
+    (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-NOT-AUTHORIZED)
+    (asserts! (is-valid-principal token) ERR-INVALID-ADDRESS)
+    (asserts! (not (is-eq token .base)) ERR-INVALID-TOKEN) ;; Prevent setting base token
+
+    ;; Additional check to prevent removing critical tokens
+    (asserts!
+      (or
+        approved ;; If we're approving, this check doesn't matter
+        (not (is-critical-token token)) ;; If removing, check it's not critical
+      )
+      ERR-NOT-AUTHORIZED
+    )
+
+    (map-set approved-tokens token approved)
+    (ok true)
+  )
+)
